@@ -1,3 +1,4 @@
+/* eslint-disable no-undef */
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import PublicCatalog from './pages/public/PublicCatalog'
 import AdminLogin from './pages/admin/AdminLogin'
@@ -9,6 +10,9 @@ import UserRoute from './components/UserRoute'
 import UserLogin from './pages/auth/UserLogin'
 import UserRegister from './pages/auth/UserRegister'
 import UserDashboard from './pages/user/UserDashboard'
+import AdminImport from './pages/admin/AdminImport'
+import AdminBackupMigration from './pages/admin/AdminBackupMigration'
+import AdminLayout from './layouts/AdminLayout'
 
 function App() {
   return (
@@ -35,13 +39,29 @@ function App() {
             <UserRoute>
               <UserDashboard />
             </UserRoute>
-          }
+          }          
         />
 
         <Route
           path="/admin/login"
           element={<AdminLogin />}
         />
+
+        <Route
+          path="/admin"
+          element={
+            <ProtectedRoute>
+              <AdminLayout />
+            </ProtectedRoute>
+          }>
+          <Route index element={<AdminDashboard />} />
+          <Route path="books" element={<AdminBooks />} />
+          <Route path="borrowing" element={<AdminBorrowing />} />
+          <Route path="import" element={<AdminImport />} />
+          <Route path="backup" element={<AdminBackupMigration />} />
+        </Route>
+
+        {/* 
 
         <Route
           path="/admin"
@@ -69,6 +89,24 @@ function App() {
             </ProtectedRoute>
           }
         />
+
+        <Route
+          path="/admin/backup"
+          element={
+            <ProtectedRoute>
+              <AdminBackupMigration />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+        path="/admin/import"
+        element={
+          <ProtectedRoute>
+            <AdminImport />
+          </ProtectedRoute>
+        }
+      /> */}
       </Routes>
     </BrowserRouter>
   )

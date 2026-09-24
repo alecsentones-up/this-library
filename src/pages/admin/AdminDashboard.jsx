@@ -1,81 +1,16 @@
-import { signOut } from 'firebase/auth'
 import { useNavigate } from 'react-router-dom'
 import {
   BookOpen,
-  LayoutDashboard,
-  LogOut,
-  Settings,
-  Users,
   ClipboardList
 } from 'lucide-react'
-import { auth } from '../../firebase'
 
 function AdminDashboard() {
   const navigate = useNavigate()
 
-  async function handleLogout() {
-    await signOut(auth)
-    navigate('/admin/login')
-  }
-
   return (
     <div className="min-h-screen bg-[#F8F9FA]">
-      <header className="bg-[#0A2540] text-white">
-        <div className="flex items-center justify-between px-6 py-5">
-          <div className="flex items-center gap-3">
-            <div className="rounded-lg bg-white/10 p-2">
-              <BookOpen size={24} />
-            </div>
-
-            <div>
-              <h1 className="font-bold">THIS Library</h1>
-              <p className="text-xs text-white/70">
-                Administration
-              </p>
-            </div>
-          </div>
-
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-white/10"
-          >
-            <LogOut size={18} />
-            <span className="hidden sm:inline">Sign Out</span>
-          </button>
-        </div>
-      </header>
-
       <div className="flex">
-        <aside className="hidden min-h-[calc(100vh-80px)] w-64 border-r border-gray-200 bg-white p-4 md:block">
-          <nav className="space-y-1">
-            <button className="flex w-full items-center gap-3 rounded-lg bg-[#0A2540] px-4 py-3 text-left text-white">
-              <LayoutDashboard size={19} />
-              Dashboard
-            </button>
 
-            <button className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left text-gray-600 hover:bg-gray-100">
-              <BookOpen size={19} />
-              Books
-            </button>
-
-            <button
-              onClick={() => navigate('/admin/borrowing')}
-              className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left text-gray-600 hover:bg-gray-100">
-              <ClipboardList size={19} />
-              Borrowing
-            </button>
-
-            <button className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left text-gray-600 hover:bg-gray-100">
-              <Users size={19} />
-              Users
-            </button>
-
-            <button className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left text-gray-600 hover:bg-gray-100">
-              <Settings size={19} />
-              Settings
-            </button>
-          </nav>
-        </aside>
 
         <main className="flex-1 p-6 md:p-10">
           <div>

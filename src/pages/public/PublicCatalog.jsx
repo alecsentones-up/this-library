@@ -1,308 +1,229 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { onAuthStateChanged, signOut } from 'firebase/auth'
 import {
   ArrowLeft,
   BookOpen,
   Search,
   UserRound,
-  X,
-  LogOut
+  X
 } from 'lucide-react'
+import { auth } from '../../firebase'
 import {
-  addDoc,
-  collection,
-  getDocs,
-  query,
-  serverTimestamp,
-  where
-} from 'firebase/firestore'
-import {
-  onAuthStateChanged,
-  signOut
-} from 'firebase/auth'
-import { useNavigate } from 'react-router-dom'
-import { auth, db } from '../../firebase'
+  getBooksPage,
+  searchBooks,
+  PUBLIC_BOOKS_PAGE_SIZE
+} from '../../services/bookPagination'
+import PaginationControls from '../../components/PaginationControls'
 
 function PublicCatalog() {
   const navigate = useNavigate()
-
   const [books, setBooks] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('all')
   const [selectedBook, setSelectedBook] = useState(null)
-
   const [user, setUser] = useState(null)
-  const [userProfile, setUserProfile] = useState(null)
-  const [authLoading, setAuthLoading] = useState(true)
-
-  const [requesting, setRequesting] = useState(false)
+  const [page, setPage] = useState(1)
+  const [hasNext, setHasNext] = useState(false)
+  const [pageCursors, setPageCursors] = useState([null])
+  const [lastDoc, setLastDoc] = useState(null)
+  const [searchResults, setSearchResults] = useState([])
+  const [searchLoading, setSearchLoading] = useState(false)
 
   useEffect(() => {
-    let cancelled = false
-
-    const unsubscribe = onAuthStateChanged(
-      auth,
-      async (currentUser) => {
-        if (cancelled) {
-          return
-        }
-
-        setUser(currentUser)
-
-        if (!currentUser) {
-          setUserProfile(null)
-          setAuthLoading(false)
-          return
-        }
-
-        try {
-          const userSnapshot = await getDocs(
-            query(
-              collection(db, 'users'),
-              where('__name__', '==', currentUser.uid)
-            )
-          )
-
-          if (!cancelled) {
-            if (!userSnapshot.empty) {
-              setUserProfile(
-                userSnapshot.docs[0].data()
-              )
-            } else {
-              setUserProfile(null)
-            }
-          }
-        } catch (error) {
-          console.error(error)
-
-          if (!cancelled) {
-            setUserProfile(null)
-          }
-        } finally {
-          if (!cancelled) {
-            setAuthLoading(false)
-          }
-        }
-      }
-    )
-
-    return () => {
-      cancelled = true
-      unsubscribe()
-    }
+    return onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser)
+    })
   }, [])
 
   useEffect(() => {
     let cancelled = false
 
-    const loadBooks = async () => {
-      setLoading(true)
-      setError('')
-
+    async function loadFirstPage() {
       try {
-        const snapshot = await getDocs(
-          collection(db, 'books')
-        )
+        const result = await getBooksPage({
+          pageSize: PUBLIC_BOOKS_PAGE_SIZE
+        })
 
-        const loadedBooks = snapshot.docs.map(
-          (bookDoc) => ({
-            id: bookDoc.id,
-            ...bookDoc.data()
-          })
-        )
-
-        if (!cancelled) {
-          setBooks(loadedBooks)
+        if (cancelled) {
+          return
         }
-      } catch (err) {
-        console.error(err)
+
+        setBooks(result.books)
+        setLastDoc(result.lastDoc)
+        setHasNext(result.hasNext)
+        setPage(1)
+        setPageCursors([null])
+        setLoading(false)
+      } catch (loadError) {
+        console.error(loadError)
 
         if (!cancelled) {
-          setError(
-            'Unable to load books. Please try again.'
-          )
-        }
-      } finally {
-        if (!cancelled) {
+          setError('Unable to load books. Please try again.')
           setLoading(false)
         }
       }
     }
 
-    loadBooks()
+    loadFirstPage()
 
     return () => {
       cancelled = true
     }
   }, [])
 
-  const filteredBooks = useMemo(() => {
-    const queryText = search.trim().toLowerCase()
+  useEffect(() => {
+    let cancelled = false
+    const queryText = search.trim()
 
-    return books.filter((book) => {
-      const matchesSearch =
-        !queryText ||
-        book.title?.toLowerCase().includes(queryText) ||
-        book.author?.toLowerCase().includes(queryText) ||
-        book.isbn?.toLowerCase().includes(queryText)
+    if (!queryText) {
+      setSearchResults([])
+      setSearchLoading(false)
+      return undefined
+    }
 
-      const matchesFilter =
-        filter === 'all' ||
-        (
-          filter === 'available' &&
-          Number(book.availableCopies) > 0
-        ) ||
-        (
-          filter === 'borrowed' &&
-          Number(book.availableCopies) === 0
-        )
+    async function runSearch() {
+      setSearchLoading(true)
 
-      return matchesSearch && matchesFilter
-    })
-  }, [books, search, filter])
+      try {
+        const results = await searchBooks({
+          search: queryText,
+          pageSize: PUBLIC_BOOKS_PAGE_SIZE
+        })
 
-  function getAvailability(book) {
-    const total = Number(book.totalCopies || 0)
-    const available = Number(
-      book.availableCopies || 0
-    )
+        if (!cancelled) {
+          setSearchResults(results)
+        }
+      } catch (searchError) {
+        console.error(searchError)
 
-    const borrowed = Math.max(
-      total - available,
-      0
-    )
-
-    if (available > 0) {
-      return {
-        label: `${available} available`,
-        className:
-          'bg-green-100 text-green-800'
+        if (!cancelled) {
+          setSearchResults([])
+        }
+      } finally {
+        if (!cancelled) {
+          setSearchLoading(false)
+        }
       }
     }
 
-    return {
-      label:
-        borrowed > 0
-          ? 'Currently borrowed'
-          : 'Unavailable',
-      className:
-        'bg-yellow-100 text-yellow-800'
+    const timeoutId = window.setTimeout(runSearch, 250)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeoutId)
+    }
+  }, [search])
+
+  async function goToNextPage() {
+    if (!lastDoc || !hasNext || loading || search.trim()) {
+      return
+    }
+
+    setLoading(true)
+    setError('')
+
+    try {
+      const result = await getBooksPage({
+        cursor: lastDoc,
+        pageSize: PUBLIC_BOOKS_PAGE_SIZE
+      })
+
+      setBooks(result.books)
+      setLastDoc(result.lastDoc)
+      setHasNext(result.hasNext)
+      setPage((currentPage) => currentPage + 1)
+      setPageCursors((currentCursors) => [
+        ...currentCursors,
+        lastDoc
+      ])
+    } catch (loadError) {
+      console.error(loadError)
+      setError('Unable to load the next page.')
+    } finally {
+      setLoading(false)
     }
   }
 
-  async function handleBorrowRequest(book) {
-    if (!user) {
-      navigate('/login')
+  async function goToPreviousPage() {
+    if (page <= 1 || loading || search.trim()) {
       return
     }
 
-    if (requesting) {
-      return
-    }
+    const previousPage = page - 1
+    const cursor = pageCursors[previousPage - 1] || null
 
-    if ((book.availableCopies ?? 0) <= 0) {
-      window.alert(
-        'This book is currently unavailable.'
-      )
-      return
-    }
-
-    setRequesting(true)
+    setLoading(true)
+    setError('')
 
     try {
-      const existingSnapshot = await getDocs(
-        query(
-          collection(db, 'borrow_records'),
-          where('userId', '==', user.uid)
-        )
-      )
+      const result = await getBooksPage({
+        cursor,
+        pageSize: PUBLIC_BOOKS_PAGE_SIZE
+      })
 
-      const alreadyRequested =
-        existingSnapshot.docs.some(
-          (recordDoc) => {
-            const record = recordDoc.data()
-
-            return (
-              record.bookId === book.id &&
-              (
-                record.status ===
-                  'Pending Request' ||
-                record.status === 'Borrowed' ||
-                record.status === 'Overdue'
-              )
-            )
-          }
-        )
-
-      if (alreadyRequested) {
-        window.alert(
-          'You already have an active request or borrowing record for this book.'
-        )
-        return
-      }
-
-      await addDoc(
-        collection(db, 'borrow_records'),
-        {
-          bookId: book.id,
-          bookTitle: book.title,
-          userId: user.uid,
-          userRole:
-            userProfile?.role || 'student',
-          userName:
-            userProfile?.name ||
-            user.displayName ||
-            user.email ||
-            'Library User',
-          userEmail: user.email || '',
-          requestDate: serverTimestamp(),
-          borrowedDate: null,
-          dueDate: null,
-          returnDate: null,
-          status: 'Pending Request'
-        }
-      )
-
-      window.alert(
-        'Your borrowing request has been submitted.'
-      )
-    } catch (error) {
-      console.error(error)
-
-      window.alert(
-        'Unable to submit your request. Please try again.'
-      )
+      setBooks(result.books)
+      setLastDoc(result.lastDoc)
+      setHasNext(result.hasNext)
+      setPage(previousPage)
+    } catch (loadError) {
+      console.error(loadError)
+      setError('Unable to load the previous page.')
     } finally {
-      setRequesting(false)
+      setLoading(false)
     }
   }
 
   async function handleSignOut() {
     try {
       await signOut(auth)
-      setSelectedBook(null)
-    } catch (error) {
-      console.error(error)
+    } catch (signOutError) {
+      console.error(signOutError)
+    }
+  }
+
+  const visibleBooks = useMemo(() => {
+    const source = search.trim() ? searchResults : books
+
+    return source.filter((book) => {
+      if (filter === 'available') {
+        return Number(book.availableCopies || 0) > 0
+      }
+
+      if (filter === 'borrowed') {
+        return Number(book.availableCopies || 0) === 0
+      }
+
+      return true
+    })
+  }, [books, search, searchResults, filter])
+
+  function getAvailability(book) {
+    const total = Number(book.totalCopies || 0)
+    const available = Number(book.availableCopies || 0)
+    const borrowed = Math.max(total - available, 0)
+
+    if (available > 0) {
+      return {
+        label: `${available} available`,
+        className: 'bg-green-100 text-green-800'
+      }
+    }
+
+    return {
+      label: borrowed > 0 ? 'Currently borrowed' : 'Unavailable',
+      className: 'bg-yellow-100 text-yellow-800'
     }
   }
 
   if (selectedBook) {
-    const availability =
-      getAvailability(selectedBook)
-
-    const total = Number(
-      selectedBook.totalCopies || 0
-    )
-
-    const available = Number(
-      selectedBook.availableCopies || 0
-    )
-
-    const borrowed = Math.max(
-      total - available,
-      0
-    )
+    const availability = getAvailability(selectedBook)
+    const total = Number(selectedBook.totalCopies || 0)
+    const available = Number(selectedBook.availableCopies || 0)
+    const borrowed = Math.max(total - available, 0)
 
     return (
       <div className="min-h-screen bg-[#F8F9FA]">
@@ -318,9 +239,7 @@ function PublicCatalog() {
 
             <div className="flex items-center gap-2">
               <BookOpen size={22} />
-              <span className="font-semibold">
-                THIS Library
-              </span>
+              <span className="font-semibold">This Library</span>
             </div>
           </div>
         </header>
@@ -332,6 +251,7 @@ function PublicCatalog() {
                 <img
                   src={selectedBook.coverImageUrl}
                   alt={selectedBook.title}
+                  loading="lazy"
                   className="w-full rounded-xl object-cover shadow"
                 />
               ) : (
@@ -353,8 +273,7 @@ function PublicCatalog() {
               </h1>
 
               <p className="mt-2 text-lg text-gray-600">
-                {selectedBook.author ||
-                  'Unknown author'}
+                {selectedBook.author || 'Unknown author'}
               </p>
 
               {selectedBook.isbn && (
@@ -363,9 +282,14 @@ function PublicCatalog() {
                 </p>
               )}
 
+              {selectedBook.callNo && (
+                <p className="mt-2 text-sm text-gray-500">
+                  Call No.: {selectedBook.callNo}
+                </p>
+              )}
+
               <p className="mt-6 leading-7 text-gray-600">
-                {selectedBook.description ||
-                  'No description available.'}
+                {selectedBook.description || 'No description available.'}
               </p>
 
               <div className="mt-8 grid grid-cols-3 gap-4">
@@ -373,49 +297,30 @@ function PublicCatalog() {
                   <div className="text-2xl font-bold text-[#0A2540]">
                     {total}
                   </div>
-                  <div className="text-sm text-gray-500">
-                    Total Copies
-                  </div>
+                  <div className="text-sm text-gray-500">Total Copies</div>
                 </div>
 
                 <div className="rounded-xl bg-[#F8F9FA] p-4 text-center">
                   <div className="text-2xl font-bold text-[#2E7D32]">
                     {available}
                   </div>
-                  <div className="text-sm text-gray-500">
-                    Available
-                  </div>
+                  <div className="text-sm text-gray-500">Available</div>
                 </div>
 
                 <div className="rounded-xl bg-[#F8F9FA] p-4 text-center">
                   <div className="text-2xl font-bold text-[#FBC02D]">
                     {borrowed}
                   </div>
-                  <div className="text-sm text-gray-500">
-                    Borrowed
-                  </div>
+                  <div className="text-sm text-gray-500">Borrowed</div>
                 </div>
               </div>
 
-              <button
-                onClick={() =>
-                  handleBorrowRequest(
-                    selectedBook
-                  )
-                }
-                disabled={
-                  available === 0 ||
-                  requesting ||
-                  authLoading
-                }
-                className="mt-8 rounded-lg bg-[#0A2540] px-6 py-3 font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {requesting
-                  ? 'Submitting...'
-                  : available === 0
-                    ? 'Currently Unavailable'
-                    : 'Request to Borrow'}
-              </button>
+              <div className="mt-8 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-blue-950">
+                <div className="font-semibold">Borrowing</div>
+                <div className="mt-1">
+                  Please bring this book to the library desk. A librarian will process the checkout.
+                </div>
+              </div>
             </div>
           </div>
         </main>
@@ -433,37 +338,26 @@ function PublicCatalog() {
             </div>
 
             <div>
-              <h1 className="font-bold">
-                This Library
-              </h1>
-
-              <p className="text-xs text-white/70">
-                Library Catalog
-              </p>
+              <h1 className="font-bold">This Library</h1>
+              <p className="text-xs text-white/70">Library Catalog</p>
             </div>
           </div>
 
-          {authLoading ? (
-            <div className="h-9 w-24 animate-pulse rounded-lg bg-white/10" />
-          ) : user ? (
+          {user ? (
             <div className="flex items-center gap-2">
               <button
                 onClick={() => navigate('/account')}
                 className="flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-white/10"
               >
                 <UserRound size={19} />
-
-                <span className="hidden sm:inline">
-                  My Account
-                </span>
+                <span className="hidden sm:inline">My Account</span>
               </button>
 
               <button
                 onClick={handleSignOut}
-                className="rounded-lg p-2 hover:bg-white/10"
-                title="Sign Out"
+                className="rounded-lg px-3 py-2 text-sm text-white/80 hover:bg-white/10 hover:text-white"
               >
-                <LogOut size={19} />
+                Sign Out
               </button>
             </div>
           ) : (
@@ -472,10 +366,7 @@ function PublicCatalog() {
               className="flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-white/10"
             >
               <UserRound size={19} />
-
-              <span className="hidden sm:inline">
-                Sign In
-              </span>
+              <span className="hidden sm:inline">Sign In</span>
             </button>
           )}
         </div>
@@ -501,9 +392,7 @@ function PublicCatalog() {
 
             <input
               value={search}
-              onChange={(event) =>
-                setSearch(event.target.value)
-              }
+              onChange={(event) => setSearch(event.target.value)}
               placeholder="Search by title, author, or ISBN..."
               className="w-full rounded-xl border border-gray-200 bg-white py-3 pl-12 pr-10 outline-none focus:border-[#0A2540]"
             />
@@ -539,11 +428,15 @@ function PublicCatalog() {
           </div>
         </div>
 
+        {search.trim() && searchLoading && (
+          <div className="mb-6 rounded-xl bg-white p-4 text-sm text-gray-500 shadow-sm">
+            Searching the catalog...
+          </div>
+        )}
+
         {loading && (
           <div className="rounded-xl bg-white p-12 text-center shadow-sm">
-            <p className="text-gray-500">
-              Loading books...
-            </p>
+            <p className="text-gray-500">Loading books...</p>
           </div>
         )}
 
@@ -553,32 +446,28 @@ function PublicCatalog() {
           </div>
         )}
 
-        {!loading &&
-          !error &&
-          filteredBooks.length === 0 && (
-            <div className="rounded-xl bg-white p-12 text-center shadow-sm">
-              <BookOpen
-                size={42}
-                className="mx-auto mb-4 text-gray-300"
-              />
+        {!loading && !error && visibleBooks.length === 0 && !searchLoading && (
+          <div className="rounded-xl bg-white p-12 text-center shadow-sm">
+            <BookOpen
+              size={42}
+              className="mx-auto mb-4 text-gray-300"
+            />
 
-              <h3 className="text-lg font-semibold text-[#212529]">
-                No books found
-              </h3>
+            <h3 className="text-lg font-semibold text-[#212529]">
+              No books found
+            </h3>
 
-              <p className="mt-2 text-gray-500">
-                Try a different search or filter.
-              </p>
-            </div>
-          )}
+            <p className="mt-2 text-gray-500">
+              Try a different search or filter.
+            </p>
+          </div>
+        )}
 
-        {!loading &&
-          !error &&
-          filteredBooks.length > 0 && (
+        {!loading && visibleBooks.length > 0 && (
+          <>
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {filteredBooks.map((book) => {
-                const availability =
-                  getAvailability(book)
+              {visibleBooks.map((book) => {
+                const availability = getAvailability(book)
 
                 return (
                   <div
@@ -589,6 +478,7 @@ function PublicCatalog() {
                       <img
                         src={book.coverImageUrl}
                         alt={book.title}
+                        loading="lazy"
                         className="h-64 w-full object-cover"
                       />
                     ) : (
@@ -609,14 +499,11 @@ function PublicCatalog() {
                       </h3>
 
                       <p className="mt-1 text-sm text-gray-500">
-                        {book.author ||
-                          'Unknown author'}
+                        {book.author || 'Unknown author'}
                       </p>
 
                       <button
-                        onClick={() =>
-                          setSelectedBook(book)
-                        }
+                        onClick={() => setSelectedBook(book)}
                         className="mt-5 w-full rounded-lg border border-[#0A2540] px-4 py-2.5 font-medium text-[#0A2540] transition hover:bg-[#0A2540] hover:text-white"
                       >
                         View Book
@@ -626,7 +513,24 @@ function PublicCatalog() {
                 )
               })}
             </div>
-          )}
+
+            {!search.trim() && (
+              <PaginationControls
+                page={page}
+                hasNext={hasNext}
+                loading={loading}
+                onPrevious={goToPreviousPage}
+                onNext={goToNextPage}
+              />
+            )}
+          </>
+        )}
+
+        {search.trim() && !searchLoading && searchResults.length > PUBLIC_BOOKS_PAGE_SIZE * 2 && (
+          <div className="mt-5 text-center text-sm text-gray-500">
+            Showing the first {PUBLIC_BOOKS_PAGE_SIZE * 2} search matches. Refine your search for more specific results.
+          </div>
+        )}
       </main>
     </div>
   )
